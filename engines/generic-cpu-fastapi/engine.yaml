@@ -1,0 +1,17 @@
+name: generic-cpu-fastapi
+description: Use CPU, small memory footprint
+vendor: Canonical Ltd
+grade: stable
+devices:
+  anyof:
+    - type: cpu
+      architecture: amd64
+memory: 30G
+disk-space: 50G
+components:
+  - fastapi-server-interface
+  - pytorch-cpu
+  - model-openvla-oft-libero-10-shard-1-of-4
+  - model-openvla-oft-libero-10-shard-2-of-4
+  - model-openvla-oft-libero-10-shard-3-of-4
+  - model-openvla-oft-libero-10-shard-4-of-4

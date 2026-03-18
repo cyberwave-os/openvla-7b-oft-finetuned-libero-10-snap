@@ -1,0 +1,12 @@
+#!/bin/bash -eu
+
+modelctl set --package http.port="9090"
+
+if snapctl is-connected hardware-observe; then
+    modelctl use-engine --auto --assume-yes
+elif lscpu -V &> /dev/null; then
+    echo "Hardware info available without hardware-observe; assuming dev mode install"
+    modelctl use-engine --auto --assume-yes
+else
+    echo "hardware-observe not connected. Skipping auto engine selection."
+fi
