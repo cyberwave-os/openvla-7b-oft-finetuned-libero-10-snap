@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "../../../openvla-7b-snap"
+		},
+		{
+			"path": "../.."
+		}
+	],
+	"settings": {}
+}
