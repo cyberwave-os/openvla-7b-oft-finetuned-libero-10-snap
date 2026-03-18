@@ -1,0 +1,7 @@
+# Snap artifacts
+partitions/
+parts/
+stage/
+prime/
+*.snap
+*.comp
