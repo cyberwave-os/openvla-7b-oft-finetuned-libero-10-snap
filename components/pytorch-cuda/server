@@ -1,0 +1,22 @@
+#!/bin/bash -eux
+
+PORT="$(modelctl get http.port)"
+
+if [[ ! -f "$INTERFACE_SERVER" ]]; then
+  echo "Interface server entrypoint not found: $INTERFACE_SERVER"
+  exit 1
+fi
+
+# Make OpenVLA-OFT source modules importable (e.g. experiments.*, prismatic.*)
+# regardless of whether sources are staged at $SNAP or $SNAP/openvla-oft.
+EXTRA_PYTHONPATH="$SNAP:$SNAP/openvla-oft:$SNAP_COMPONENTS/model-openvla-oft-libero-10-shard-1-of-4/openvla-oft"
+if [[ -n "${PYTHONPATH:-}" ]]; then
+  export PYTHONPATH="$EXTRA_PYTHONPATH:$PYTHONPATH"
+else
+  export PYTHONPATH="$EXTRA_PYTHONPATH"
+fi
+
+exec "$SNAP_COMPONENTS/pytorch-cuda/bin/python3" "$INTERFACE_SERVER" \
+  --model_path "$MODEL_FILE" \
+  --port "$PORT" \
+  --device "cuda"

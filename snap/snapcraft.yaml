@@ -1,0 +1,259 @@
+name: openvla-oft-finetuned-libero-10
+base: core22
+version: 'v1'
+summary: openvla-oft-finetuned-libero-10 inference snap
+description: |
+  Strictly confined inference snap for OpenVLA-OFT Finetuned Libero 10 with FastAPI and XVLA interfaces.
+
+grade: devel
+confinement: strict
+compression: lzo
+
+environment:
+  SNAP_COMPONENTS: /snap/$SNAP_INSTANCE_NAME/components/$SNAP_REVISION
+  ARCH_TRIPLET: $CRAFT_ARCH_TRIPLET_BUILD_FOR
+
+parts:
+  cli:
+    source: https://github.com/canonical/inference-snaps-cli.git
+    source-tag: v1.0.0-beta.34
+    plugin: go
+    build-snaps:
+      - go/1.24/stable
+    stage-packages:
+      - pciutils
+      - nvidia-utils-580
+      - clinfo
+    organize:
+      bin/cli: bin/modelctl
+
+  component-local-files-pytorch-cpu:
+    plugin: dump
+    source: components/pytorch-cpu
+    organize:
+      "*": "(component/pytorch-cpu)/"
+
+  component-local-files-pytorch-cuda:
+    plugin: dump
+    source: components/pytorch-cuda
+    organize:
+      "*": "(component/pytorch-cuda)/"
+
+  component-local-files-fastapi-server-interface:
+    plugin: dump
+    source: components/fastapi-server-interface
+    organize:
+      "*": "(component/fastapi-server-interface)/"
+
+  component-local-files-xvla-server-interface:
+    plugin: dump
+    source: components/xvla-server-interface
+    organize:
+      "*": "(component/xvla-server-interface)/"
+
+  model-openvla-oft-finetuned-libero-10-shards:
+    plugin: nil
+    override-prime: |
+      set -eux
+      MODEL_PROJ_DIR="$CRAFT_PROJECT_DIR/components/model-openvla-oft-finetuned-libero-10"
+      MODEL_FILES_DIR="$MODEL_PROJ_DIR/openvla-7b-oft-finetuned-libero-10"
+
+      # Bypassing the usual part lifecycle saves disk space and time when
+      # dealing with large files. Copy each safetensor shard directly from
+      # the project into its own component's prime directory.
+      for i in 1 2 3 4; do
+        target_var="CRAFT_COMPONENT_MODEL_OPENVLA_OFT_LIBERO_10_SHARD_${i}_OF_4_PRIME"
+        shard_prime="${!target_var}"
+        mkdir -p "$shard_prime/openvla-7b-oft-finetuned-libero-10"
+
+        cp -v "$MODEL_FILES_DIR/model-0000${i}-of-00004.safetensors" "$shard_prime/openvla-7b-oft-finetuned-libero-10/"
+
+        if [ "$i" -eq 1 ]; then
+          cp -v "$MODEL_PROJ_DIR/component.yaml" "$shard_prime/component.yaml"
+          cp -v "$MODEL_PROJ_DIR/init" "$shard_prime/init"
+          chmod +x "$shard_prime/init"
+
+          # Keep shard-1 self-contained: copy everything except weight shard files.
+          # This avoids runtime misses when upstream adds new metadata/checkpoint sidecars.
+          for f in "$MODEL_FILES_DIR"/*; do
+            [ -e "$f" ] || continue
+            base="$(basename "$f")"
+            case "$base" in
+              model-*-of-00004.safetensors) ;;
+              *) cp -a "$f" "$shard_prime/openvla-7b-oft-finetuned-libero-10/" ;;
+            esac
+          done
+        else
+          echo "# No config" > "$shard_prime/component.yaml"
+        fi
+      done
+
+  openvla-oft-source:
+    plugin: dump
+    source: https://github.com/moojink/openvla-oft.git
+    override-build: |
+      set -eux
+      craftctl default
+      patch --forward -p1 -d "$CRAFT_PART_INSTALL" < "$CRAFT_PROJECT_DIR/patches/openvla-oft-cpu.patch" || true
+      grep -n 'DEVICE = torch.device("cpu")' "$CRAFT_PART_INSTALL/experiments/robot/openvla_utils.py"
+      grep -n 'state_dict = torch.load(checkpoint_path, weights_only=True, map_location="cpu")' "$CRAFT_PART_INSTALL/experiments/robot/openvla_utils.py"
+    prime:
+      - -bin/**
+      - -lib/**
+      - -include/**
+      - -lib64
+      - -share/**
+      - -pyvenv.cfg
+      - -__pycache__/**
+      - -**/__pycache__/**
+
+  pytorch-runtime-cpu:
+    plugin: python
+    source: components/pytorch-cpu
+    override-build: |
+      set -eux
+      rm -rf "$CRAFT_PART_INSTALL"
+      mkdir -p "$CRAFT_PART_INSTALL"
+      craftctl default
+    build-environment:
+      - PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
+    python-packages:
+      - torch==2.2.0
+      - torchvision==0.17.0
+      - torchaudio==2.2.0
+      - accelerate>=0.25.0
+      - draccus==0.8.0
+      - timm==0.9.10
+      - tokenizers==0.19.1
+      - sentencepiece==0.1.99
+      - peft==0.11.1
+      - einops
+      - huggingface_hub
+      - jsonlines
+      - matplotlib
+      - protobuf
+      - rich
+      - wandb
+      - tensorflow==2.15.0
+      - tensorflow_datasets==4.9.3
+      - tensorflow_graphics==2021.12.3
+      - git+https://github.com/moojink/dlimp_openvla
+      - diffusers==0.30.3
+      - imageio
+      - fastapi
+      - uvicorn
+      - python-multipart
+      - json-numpy
+      - pillow
+      - numpy
+      - git+https://github.com/moojink/transformers-openvla-oft.git
+    stage-packages:
+      - libgomp1
+    organize:
+      "*": "(component/pytorch-cpu)/"
+
+  pytorch-runtime-cuda:
+    plugin: python
+    source: components/pytorch-cuda
+    override-build: |
+      set -eux
+      rm -rf "$CRAFT_PART_INSTALL"
+      mkdir -p "$CRAFT_PART_INSTALL"
+      craftctl default
+    build-environment:
+      - PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu121
+    python-packages:
+      - torch>=2.2.0
+      - torchvision>=0.16.0
+      - torchaudio>=2.2.0
+      - timm==0.9.10
+      - tokenizers==0.19.1
+      - sentencepiece==0.1.99
+      - peft==0.11.1
+      - einops
+      - accelerate
+      - fastapi
+      - uvicorn
+      - python-multipart
+      - json-numpy
+      - pillow
+      - numpy
+      - git+https://github.com/moojink/transformers-openvla-oft.git
+    stage-packages:
+      - libgomp1
+    organize:
+      "*": "(component/pytorch-cuda)/"
+
+  engines:
+    source: engines
+    plugin: dump
+    organize:
+      "*": engines/
+
+  scripts:
+    source: scripts
+    plugin: dump
+    stage-packages:
+      - jq
+    organize:
+      "server.sh": bin/
+
+apps:
+  openvla-oft-finetuned-libero-10:
+    command: bin/modelctl
+    plugs:
+      - hardware-observe
+      - system-observe
+      - opengl
+      - network
+
+  server:
+    command: bin/server.sh
+    daemon: simple
+    plugs:
+      - network
+      - network-bind
+      - hardware-observe
+      - system-observe
+      - opengl
+
+components:
+  model-openvla-oft-libero-10-shard-1-of-4: &model-openvla-oft-finetuned-libero-10
+    type: standard
+    summary: OpenVLA-OFT model weights (shard 1 of 4)
+    description: OpenVLA-OFT model in safetensor format (shard 1 of 4, includes metadata)
+
+  model-openvla-oft-libero-10-shard-2-of-4:
+    <<: *model-openvla-oft-finetuned-libero-10
+    summary: OpenVLA-OFT model weights (shard 2 of 4)
+    description: OpenVLA-OFT model in safetensor format (shard 2 of 4)
+
+  model-openvla-oft-libero-10-shard-3-of-4:
+    <<: *model-openvla-oft-finetuned-libero-10
+    summary: OpenVLA-OFT model weights (shard 3 of 4)
+    description: OpenVLA-OFT model in safetensor format (shard 3 of 4)
+
+  model-openvla-oft-libero-10-shard-4-of-4:
+    <<: *model-openvla-oft-finetuned-libero-10
+    summary: OpenVLA-OFT model weights (shard 4 of 4)
+    description: OpenVLA-OFT model in safetensor format (shard 4 of 4)
+
+  pytorch-cpu:
+    type: standard
+    summary: PyTorch CPU runtime
+    description: Inference runtime for OpenVLA-OFT using PyTorch (CPU).
+
+  pytorch-cuda:
+    type: standard
+    summary: PyTorch CUDA runtime
+    description: Inference runtime for OpenVLA-OFT using PyTorch (CUDA).
+
+  fastapi-server-interface:
+    type: standard
+    summary: FastAPI Server Interface
+    description: FastAPI multipart server interface for OpenVLA-OFT.
+
+  xvla-server-interface:
+    type: standard
+    summary: XVLA Server Interface
+    description: XVLA JSON contract interface for OpenVLA-OFT.

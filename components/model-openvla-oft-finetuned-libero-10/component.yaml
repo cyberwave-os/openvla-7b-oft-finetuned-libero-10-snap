@@ -1,0 +1,2 @@
+environment:
+  - MODEL_FILE=/tmp/openvla-oft-finetuned-libero-10-shards/

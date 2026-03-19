@@ -1,0 +1,21 @@
+#!/bin/bash -eu
+
+SHARD_DIR="/tmp/openvla-oft-finetuned-libero-10-shards"
+[ -d "$SHARD_DIR" ] && rm -r "$SHARD_DIR"
+mkdir -p "$SHARD_DIR"
+
+for f in "$SNAP_COMPONENTS/model-openvla-oft-libero-10-shard-1-of-4/openvla-7b-oft-finetuned-libero-10"/*; do
+    [ -e "$f" ] || continue
+    case "$f" in
+        *.safetensors) ;;
+        # Copy JSON/config files so update_auto_map can write to them at runtime
+        *.json) cp "$f" "$SHARD_DIR/$(basename "$f")" ;;
+        *) ln -s "$f" "$SHARD_DIR/$(basename "$f")" ;;
+    esac
+done
+
+for i in 1 2 3 4; do
+    shard_num="$(printf "%05d" "$i")"
+    shard_file="model-${shard_num}-of-00004.safetensors"
+    ln -s "$SNAP_COMPONENTS/model-openvla-oft-libero-10-shard-${i}-of-4/openvla-7b-oft-finetuned-libero-10/$shard_file" "$SHARD_DIR/$shard_file"
+done

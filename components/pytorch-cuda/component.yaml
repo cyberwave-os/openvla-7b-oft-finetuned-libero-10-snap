@@ -1,0 +1,3 @@
+type: standard
+summary: "PyTorch CUDA Runtime"
+description: "Inference runtime for OpenVLA-OFT using PyTorch CUDA"
