@@ -11,10 +11,15 @@ The snap package name in `snap/snapcraft.yaml` is:
 
 ## Build From Source
 
-From this repository root:
+Clone the repository:
+
+```shell
+git clone https://github.com/canonical/openvla-7b-oft-finetuned-libero-10-snap.git
+cd openvla-7b-oft-finetuned-libero-10-snap
+```
 
 ```bash
-snapcraft pack
+snapcraft pack -v
 ```
 
 Install the generated snap and components:
@@ -76,3 +81,7 @@ curl -X POST "http://localhost:9090/act" \
   -F "text=pick up the blue block" \
   -F "image=@/path/to/image.png"
 ```
+
+## Resources
+
+- [Inference Snaps documentation](https://documentation.ubuntu.com/inference-snaps/)
