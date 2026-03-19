@@ -1,4 +1,4 @@
-name: nvidia-gpu-amd64-fastapi
+name: nvidia-gpu-xvla
 description: Use CUDA for inference on Nvidia GPUs
 vendor: Canonical Ltd
 grade: stable
@@ -12,7 +12,7 @@ devices:
 memory: 30G
 disk-space: 50G
 components:
-  - fastapi-server-interface
+  - xvla-server-interface
   - pytorch-cuda
   - model-openvla-oft-libero-10-shard-1-of-4
   - model-openvla-oft-libero-10-shard-2-of-4
