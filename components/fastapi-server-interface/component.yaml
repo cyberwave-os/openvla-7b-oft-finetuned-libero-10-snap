@@ -1,5 +1,6 @@
-type: standard
-summary: "FastAPI Server Interface"
-description: "FastAPI server interface for OpenVLA-OFT inference runtime"
+servers:
+  fastapi-server-interface:
+    protocol: http
+    base-path: /act
 environment:
   - INTERFACE_SERVER=$COMPONENT/server.py

@@ -1,5 +1,6 @@
-type: standard
-summary: "XVLA Standard Interface"
-description: "XVLA JSON payload server interface for OpenVLA-OFT inference runtime"
+servers:
+  xvla-server-interface:
+    protocol: http
+    base-path: /act
 environment:
   - INTERFACE_SERVER=$COMPONENT/server.py
