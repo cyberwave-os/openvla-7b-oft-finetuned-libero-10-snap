@@ -50,7 +50,7 @@ sudo openvla-oft-finetuned-libero-10 use-engine nvidia-gpu-amd64-fastapi
 Then, check server status:
 
 ```shell
-openvla-7b status
+openvla-oft-finetuned-libero-10 status
 ```
 
 For instance, if the xvla server has been selected the status will look as follows:
