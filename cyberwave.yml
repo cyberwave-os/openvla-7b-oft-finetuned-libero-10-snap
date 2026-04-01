@@ -5,7 +5,7 @@ cyberwave-cloud-node:
   # Builds the snap, installs it, selects the GPU engine, and starts the
   # XVLA server daemon (FastAPI on port from `modelctl get http.port`,
   # default 8080).
-  profile-slug: openvla-oft-finetuned-libero-10
+  profile_slug: openvla-oft-finetuned-libero-10
   install_script: ./install.sh
 
   # Forwards the MQTT JSON payload to the already-running snap server.
