@@ -1,0 +1,20 @@
+# Cyberwave Cloud Node configuration for OpenVLA-OFT (snap-based)
+# The snap bundles the model, runtime, and XVLA server as a daemon.
+
+cyberwave-cloud-node:
+  # Builds the snap, installs it, selects the GPU engine, and starts the
+  # XVLA server daemon (FastAPI on port from `modelctl get http.port`,
+  # default 8080).
+  profile-slug: openvla-oft-finetuned-libero-10
+  install_script: ./install.sh
+
+  # Forwards the MQTT JSON payload to the already-running snap server.
+  # {body} is the raw JSON from Cyberwave (must match the /act contract):
+  # {
+  #   "instruction": "pick up the red block",
+  #   "image": "<json_numpy encoded uint8 HxWx3 array>"
+  # }
+  inference: |
+    curl -sf -X POST http://localhost:8080/act \
+      -H "Content-Type: application/json" \
+      -d '{body}'

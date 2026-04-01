@@ -82,6 +82,26 @@ curl -X POST "http://localhost:9090/act" \
   -F "image=@/path/to/image.png"
 ```
 
+### Run with Cyberwave
+
+First, you install the package
+
+```bash
+pip install cyberwave-cloud-node
+
+# or if you want the compiled version
+
+sudo apt-get install cyberwave-cloud-node
+```
+
+Then start the node:
+
+```bash
+# Start the cloud node (backend assigns UUID and slug)
+export CYBERWAVE_API_KEY=your-token-here
+cyberwave-cloud-node start
+```
+
 ## Resources
 
 - [Inference Snaps documentation](https://documentation.ubuntu.com/inference-snaps/)
