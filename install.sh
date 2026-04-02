@@ -1,7 +1,11 @@
 #!/bin/bash
 set -eu
 
+unset LD_LIBRARY_PATH 2>/dev/null || true
+
 apt-get update -qq && apt-get install -y -qq curl snapd
+sudo systemctl start snapd.socket snapd.service || true
+sudo snap wait system seed.loaded || true
 sudo snap install snapcraft --classic
 
 snapcraft pack -v
