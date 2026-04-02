@@ -3,6 +3,8 @@ set -eu
 
 apt-get update -qq && apt-get install -y -qq curl
 
+snapcraft pack -v
+
 sudo snap install --dangerous ./openvla-oft-finetuned-libero-10_*.snap
 
 sudo snap install --dangerous ./openvla-oft-finetuned-libero-10+*.comp
