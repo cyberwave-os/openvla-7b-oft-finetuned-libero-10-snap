@@ -1,7 +1,8 @@
 #!/bin/bash
 set -eu
 
-apt-get update -qq && apt-get install -y -qq curl
+apt-get update -qq && apt-get install -y -qq curl snapd
+sudo snap install snapcraft --classic
 
 snapcraft pack -v
 
