@@ -47,6 +47,22 @@ sudo openvla-oft-finetuned-libero-10 use-engine generic-cpu-fastapi
 sudo openvla-oft-finetuned-libero-10 use-engine nvidia-gpu-amd64-fastapi
 ```
 
+Then, check server status:
+
+```shell
+openvla-oft-finetuned-libero-10 status
+```
+
+For instance, if the xvla server has been selected the status will look as follows:
+
+```shell
+engine: generic-cpu-xvla
+services:
+    server: active
+endpoints:
+  xvla: http://localhost:9090/act
+```
+
 ## Start And Check Server
 
 ```bash

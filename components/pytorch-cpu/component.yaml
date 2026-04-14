@@ -1,3 +1,0 @@
-type: standard
-summary: "PyTorch CPU Runtime"
-description: "Inference runtime for OpenVLA-OFT using PyTorch CPU"
