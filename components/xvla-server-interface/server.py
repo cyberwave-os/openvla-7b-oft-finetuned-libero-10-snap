@@ -1,6 +1,7 @@
 import argparse
 import contextlib
 import io
+import json
 import logging
 import os
 import sys
@@ -40,18 +41,6 @@ parser = argparse.ArgumentParser(description="OpenVLA-OFT XVLA interface")
 parser.add_argument("--model_path", type=str, default=os.environ.get("MODEL_PATH", ""))
 parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")))
 parser.add_argument("--device", type=str, default=os.environ.get("DEVICE", "cpu"))
-parser.add_argument("--unnorm_key", type=str, default=os.environ.get("UNNORM_KEY", ""))
-parser.add_argument(
-    "--num_images", type=int, default=int(os.environ.get("NUM_IMAGES", "1"))
-)
-parser.add_argument(
-    "--use_proprio",
-    type=lambda v: v.lower() != "false",
-    default=os.environ.get("USE_PROPRIO", "true").lower() != "false",
-)
-parser.add_argument(
-    "--proprio_dim", type=int, default=int(os.environ.get("PROPRIO_DIM", "6"))
-)
 args, _ = parser.parse_known_args()
 
 model = None
@@ -70,8 +59,6 @@ class SimpleConfig:
         model_path: str,
         training_config: dict,
         unnorm_key: str = "",
-        num_images: int = 1,
-        use_proprio: bool = True,
     ):
         self.pretrained_checkpoint = model_path
 
@@ -81,10 +68,8 @@ class SimpleConfig:
         self.use_film = training_config.get("use_film", False)
         self.load_in_8bit = False
         self.load_in_4bit = False
-        self.num_images_in_input = training_config.get(
-            "num_images_in_input", num_images
-        )
-        self.use_proprio = training_config.get("use_proprio", use_proprio)
+        self.num_images_in_input = training_config.get("num_images_in_input", 1)
+        self.use_proprio = training_config.get("use_proprio", True)
         self.center_crop = True
         self.num_open_loop_steps = training_config.get("num_actions_chunk", 10)
 
@@ -115,7 +100,7 @@ async def lifespan(app: FastAPI):
         tc = {}
 
     training_config = tc
-    logging.info(f"Loaded training config: {training_config}")
+    # Config is already logged by load_training_config()
 
     # Override normalization_type global if specified in training_config
     if "normalization_type" in tc:
@@ -125,16 +110,13 @@ async def lifespan(app: FastAPI):
 
     # Extract dimensions from training_config
     action_dim = tc.get("action_dim", 6)
-    proprio_dim = tc.get("proprio_dim", args.proprio_dim)
+    proprio_dim = tc.get("proprio_dim", 6)
     expected_proprio_dim = proprio_dim
     logging.info(f"Using action_dim={action_dim}, proprio_dim={proprio_dim}")
 
     cfg = SimpleConfig(
         args.model_path,
         tc,
-        unnorm_key=args.unnorm_key,
-        num_images=args.num_images,
-        use_proprio=args.use_proprio,
     )
 
     model = get_vla(cfg).to(args.device)
@@ -159,13 +141,8 @@ async def lifespan(app: FastAPI):
         args.device
     )
 
-    # TODO: External proprio API is pending; for now we keep an internal
-    # placeholder state/projector required by openvla_utils.
+    # Pass proprio_dim explicitly to bypass global constant
     if cfg.use_proprio:
-        logging.warning(
-            "USE_PROPRIO input handling is TODO; using internal zero-state placeholder."
-        )
-        # Pass proprio_dim explicitly to bypass global constant
         proprio_projector = get_proprio_projector(
             cfg, llm_dim=model.llm_dim, proprio_dim=proprio_dim
         ).to(args.device)
@@ -282,7 +259,25 @@ def get_additional_images(payload: dict, num_images: int):
 
 @app.post("/act")
 def predict_action(payload: dict):
+    """
+    Predict action from observation.
+    
+    Accepts JSON payload with "encoded" field containing json_numpy-encoded observation.
+    The observation should contain:
+    - instruction: Task instruction string
+    - full_image: Primary camera image (numpy array)
+    - state: Robot state (optional, auto-filled if missing)
+    - wrist_image: Wrist camera image (optional, for multi-camera setups)
+    - Additional image keys with "image" or "wrist" or "camera" in name
+    
+    Returns:
+        List of action arrays (action chunk)
+    """
     try:
+        # Handle double-encoded payload (json_numpy support)
+        if "encoded" in payload:
+            payload = json.loads(payload["encoded"])
+        
         instruction = get_instruction(payload)
         image = get_primary_image(payload)
 
@@ -291,8 +286,8 @@ def predict_action(payload: dict):
 
         observation = {
             "full_image": np.array(image),
-            # TODO: replace with user-provided/stateful proprio once API is defined.
-            "state": np.zeros(expected_proprio_dim, dtype=np.float32),
+            # Use provided state or create zero state
+            "state": payload.get("state", np.zeros(expected_proprio_dim, dtype=np.float32)),
         }
 
         # Add additional camera images if configured
