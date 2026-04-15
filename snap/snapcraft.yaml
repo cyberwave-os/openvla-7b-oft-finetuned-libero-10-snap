@@ -90,7 +90,7 @@ parts:
 
   openvla-oft-source:
     plugin: dump
-    source: https://github.com/moojink/openvla-oft.git
+    source: openvla-local
     override-build: |
       set -eux
       craftctl default
