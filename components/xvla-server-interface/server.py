@@ -1,3 +1,16 @@
+#!/usr/bin/env python
+"""
+server_xvla.py
+
+Training-config-driven XVLA JSON interface server for OpenVLA-OFT inference.
+
+This server uses JSON payloads with json_numpy encoding for image data,
+and automatically configures itself from training_config.json in the checkpoint.
+
+Usage:
+    python vla-scripts/server_xvla.py --model_path /path/to/checkpoint [--port 8080] [--device cuda]
+"""
+
 import argparse
 import contextlib
 import io
@@ -37,11 +50,6 @@ import experiments.robot.openvla_utils as _utils_mod
 
 json_numpy.patch()
 
-parser = argparse.ArgumentParser(description="OpenVLA-OFT XVLA interface")
-parser.add_argument("--model_path", type=str, default=os.environ.get("MODEL_PATH", ""))
-parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")))
-parser.add_argument("--device", type=str, default=os.environ.get("DEVICE", "cpu"))
-args, _ = parser.parse_known_args()
 
 model = None
 processor = None
@@ -91,13 +99,26 @@ async def lifespan(app: FastAPI):
         expected_proprio_dim, \
         training_config
 
+    logging.info("=" * 80)
+    logging.info("OpenVLA-OFT XVLA Server Starting")
+    logging.info("=" * 80)
+    logging.info(f"Python version: {sys.version}")
+    logging.info(f"PyTorch version: {torch.__version__}")
+    logging.info(f"CUDA available: {torch.cuda.is_available()}")
+    logging.info(f"Model checkpoint: {args.model_path}")
+    logging.info(f"Device: {args.device}")
+    logging.info(f"Port: {args.port}")
+
     # Load training_config.json from checkpoint
+    logging.info(f"Loading training_config.json from {args.model_path}")
     tc = load_training_config(args.model_path)
     if tc is None:
         logging.warning(
             f"No training_config.json found in {args.model_path}, using defaults"
         )
         tc = {}
+    else:
+        logging.info(f"Training config loaded successfully with {len(tc)} parameters")
 
     training_config = tc
     # Config is already logged by load_training_config()
@@ -112,43 +133,91 @@ async def lifespan(app: FastAPI):
     action_dim = tc.get("action_dim", 6)
     proprio_dim = tc.get("proprio_dim", 6)
     expected_proprio_dim = proprio_dim
-    logging.info(f"Using action_dim={action_dim}, proprio_dim={proprio_dim}")
-
-    cfg = SimpleConfig(
-        args.model_path,
-        tc,
+    num_images = tc.get("num_images_in_input", 1)
+    logging.info(
+        f"Model configuration: action_dim={action_dim}, proprio_dim={proprio_dim}, num_images={num_images}"
     )
 
+    cfg = SimpleConfig(args.model_path, tc)
+
+    logging.info("Loading base VLA model...")
     model = get_vla(cfg).to(args.device)
+    logging.info(f"✓ Base VLA model loaded successfully")
+    logging.info(f"  Model LLM dimension: {model.llm_dim}")
+    logging.info(f"  Model type: {type(model).__name__}")
 
     if not cfg.unnorm_key:
         cfg.unnorm_key = next(iter(model.norm_stats.keys()))
+        logging.info(
+            f"No unnorm_key specified, using first available: {cfg.unnorm_key}"
+        )
     elif (
         cfg.unnorm_key not in model.norm_stats
         and f"{cfg.unnorm_key}_no_noops" in model.norm_stats
     ):
+        old_key = cfg.unnorm_key
         cfg.unnorm_key = f"{cfg.unnorm_key}_no_noops"
+        logging.info(f"Adjusted unnorm_key: {old_key} → {cfg.unnorm_key}")
 
     if cfg.unnorm_key not in model.norm_stats:
+        available_keys = list(model.norm_stats.keys())
+        logging.error(
+            f"Invalid unnorm_key '{cfg.unnorm_key}'. Available keys: {available_keys}"
+        )
         raise RuntimeError(
-            f"Invalid unnorm_key '{cfg.unnorm_key}'. Available keys: {list(model.norm_stats.keys())}"
+            f"Invalid unnorm_key '{cfg.unnorm_key}'. Available keys: {available_keys}"
         )
 
+    logging.info(f"Using normalization key: {cfg.unnorm_key}")
+
+    logging.info("Loading processor...")
     processor = get_processor(cfg)
+    logging.info("✓ Processor loaded successfully")
 
     # Pass action_dim explicitly to bypass global constant
+    logging.info(
+        f"Loading action head with llm_dim={model.llm_dim}, action_dim={action_dim}..."
+    )
+    try:
+        from experiments.robot.openvla_utils import find_checkpoint_file
+
+        action_head_checkpoint = find_checkpoint_file(args.model_path, "action_head")
+        logging.info(f"  Found action head checkpoint: {action_head_checkpoint}")
+    except Exception as e:
+        logging.warning(f"  Could not find action head checkpoint: {e}")
+
     action_head = get_action_head(cfg, model.llm_dim, action_dim=action_dim).to(
         args.device
     )
+    logging.info("✓ Action head loaded successfully")
 
     # Pass proprio_dim explicitly to bypass global constant
     if cfg.use_proprio:
+        logging.info(
+            f"Loading proprio projector with llm_dim={model.llm_dim}, proprio_dim={proprio_dim}..."
+        )
+        try:
+            from experiments.robot.openvla_utils import find_checkpoint_file
+
+            proprio_checkpoint = find_checkpoint_file(
+                args.model_path, "proprio_projector"
+            )
+            logging.info(f"  Found proprio projector checkpoint: {proprio_checkpoint}")
+        except Exception as e:
+            logging.warning(f"  Could not find proprio projector checkpoint: {e}")
+
         proprio_projector = get_proprio_projector(
             cfg, llm_dim=model.llm_dim, proprio_dim=proprio_dim
         ).to(args.device)
+        logging.info("✓ Proprio projector loaded successfully")
+    else:
+        logging.info("Proprio disabled in training config, skipping proprio projector")
 
     model.eval()
     model_ready = True
+    logging.info("=" * 80)
+    logging.info("✅ Model loaded and ready for inference")
+    logging.info("=" * 80)
     print("✅ Model loaded and ready for actions.")
     yield
 
@@ -181,35 +250,50 @@ def deserialize_image_payload(image_payload):
     if isinstance(value, np.ndarray):
         if value.ndim == 1:
             try:
-                return Image.open(io.BytesIO(value.astype(np.uint8).tobytes())).convert(
+                img = Image.open(io.BytesIO(value.astype(np.uint8).tobytes())).convert(
                     "RGB"
                 )
+                logging.debug(f"Deserialized 1D byte array to PIL Image: {img.size}")
+                return img
             except Exception as exc:
+                logging.error(f"Unable to decode image bytes: {exc}")
                 raise ValueError(f"Unable to decode image bytes: {exc}") from exc
         image_array = value
-    elif isinstance(value, list):
-        image_array = np.asarray(value)
+        logging.debug(
+            f"Using numpy array directly: shape={image_array.shape}, dtype={image_array.dtype}"
+        )
+    elif isinstance(value, Image.Image):
+        logging.debug(f"Using PIL Image directly: {value.size}")
+        return value
     else:
-        raise ValueError("Image payload must deserialize to numpy array or list")
+        logging.error(f"Unexpected image payload type: {type(value)}")
+        raise ValueError(f"Unexpected image payload type: {type(value)}")
 
     if image_array.ndim not in (2, 3):
+        logging.error(f"Invalid image dimensions: {image_array.ndim}")
         raise ValueError("Image payload must be 2D or 3D")
 
     if image_array.dtype != np.uint8:
+        logging.debug(f"Converting image from {image_array.dtype} to uint8")
         if (
             np.issubdtype(image_array.dtype, np.floating)
             and image_array.size > 0
             and image_array.max() <= 1.0
         ):
+            logging.debug("Scaling float image [0,1] to [0,255]")
             image_array = image_array * 255.0
         image_array = np.clip(image_array, 0, 255).astype(np.uint8)
 
     if image_array.ndim == 3 and image_array.shape[2] == 1:
+        logging.debug("Converting single-channel image to grayscale")
         image_array = image_array[:, :, 0]
     if image_array.ndim == 3 and image_array.shape[2] > 3:
+        logging.debug(f"Truncating image from {image_array.shape[2]} channels to 3")
         image_array = image_array[:, :, :3]
 
-    return Image.fromarray(image_array).convert("RGB")
+    result = Image.fromarray(image_array).convert("RGB")
+    logging.debug(f"Final PIL Image: {result.size}")
+    return result
 
 
 def get_instruction(payload: dict) -> str:
@@ -222,10 +306,10 @@ def get_instruction(payload: dict) -> str:
 
 
 def get_primary_image(payload: dict):
-    for key in ("image", "image0", "full_image"):
+    for key in ("image1", "full_image", "image", "image0"):
         if key in payload:
             return deserialize_image_payload(payload[key])
-    raise ValueError("Missing field: image")
+    raise ValueError("Missing field: image1 or full_image")
 
 
 def get_additional_images(payload: dict, num_images: int):
@@ -235,19 +319,33 @@ def get_additional_images(payload: dict, num_images: int):
     if num_images <= 1:
         return additional
 
+    # Look for standardized image2, image3 first, then fallback to other keys
+    standard_keys = ["image2", "image3"]
+    for key in standard_keys:
+        if key in payload:
+            try:
+                additional[key] = np.array(deserialize_image_payload(payload[key]))
+            except Exception as e:
+                logging.warning(f"Failed to deserialize image '{key}': {e}")
+
     # Look for wrist/secondary camera images
     for key in payload:
-        if key in (
-            "image",
-            "image0",
-            "full_image",
-            "instruction",
-            "language_instruction",
-            "state",
+        if (
+            key
+            in (
+                "image1",
+                "image",
+                "image0",
+                "full_image",
+                "instruction",
+                "language_instruction",
+                "state",
+            )
+            or key in additional
         ):
             continue
 
-        # Check for image-related keys (wrist, image1, image2, secondary, etc.)
+        # Check for image-related keys (wrist, secondary, camera, etc.)
         if "image" in key.lower() or "wrist" in key.lower() or "camera" in key.lower():
             try:
                 additional[key] = np.array(deserialize_image_payload(payload[key]))
@@ -261,50 +359,111 @@ def get_additional_images(payload: dict, num_images: int):
 def predict_action(payload: dict):
     """
     Predict action from observation.
-    
+
     Accepts JSON payload with "encoded" field containing json_numpy-encoded observation.
     The observation should contain:
     - instruction: Task instruction string
-    - full_image: Primary camera image (numpy array)
+    - image1: Primary camera image (numpy array) - can also use full_image
+    - image2: Secondary camera image (optional, for multi-camera setups)
+    - image3: Third camera image (optional, for 3-camera setups)
     - state: Robot state (optional, auto-filled if missing)
-    - wrist_image: Wrist camera image (optional, for multi-camera setups)
-    - Additional image keys with "image" or "wrist" or "camera" in name
-    
+    - Backward compatible with wrist_image, full_image, and other image key names
+
     Returns:
         List of action arrays (action chunk)
     """
     try:
+        logging.debug(
+            f"Received /act request with payload keys: {list(payload.keys())}"
+        )
+
         # Handle double-encoded payload (json_numpy support)
         if "encoded" in payload:
+            logging.debug("Decoding double-encoded payload")
             payload = json.loads(payload["encoded"])
-        
+            logging.debug(f"Decoded payload keys: {list(payload.keys())}")
+
         instruction = get_instruction(payload)
-        image = get_primary_image(payload)
+        logging.debug(
+            f"Instruction: {instruction[:50]}..."
+            if len(instruction) > 50
+            else f"Instruction: {instruction}"
+        )
 
         # Get number of cameras from training config
         num_images = training_config.get("num_images_in_input", 1)
+        logging.debug(f"Expected number of images: {num_images}")
 
+        # Build observation with standardized keys
         observation = {
-            "full_image": np.array(image),
             # Use provided state or create zero state
-            "state": payload.get("state", np.zeros(expected_proprio_dim, dtype=np.float32)),
+            "state": payload.get(
+                "state", np.zeros(expected_proprio_dim, dtype=np.float32)
+            ),
         }
 
-        # Add additional camera images if configured
-        if num_images > 1:
-            additional_images = get_additional_images(payload, num_images)
-            observation.update(additional_images)
+        state_shape = (
+            observation["state"].shape
+            if hasattr(observation["state"], "shape")
+            else len(observation["state"])
+        )
+        logging.debug(
+            f"Robot state shape: {state_shape}, expected: {expected_proprio_dim}"
+        )
 
-            if len(additional_images) > 0:
-                logging.info(
-                    f"Using {len(additional_images) + 1} cameras: full_image + {list(additional_images.keys())}"
-                )
-            else:
-                logging.warning(
-                    f"training_config specifies {num_images} images but only primary image provided"
-                )
+        # Map image1/image2/image3 to internal keys: full_image, wrist_image, tertiary_image
+        image_mapping = [
+            (["image1", "full_image", "image", "image0"], "full_image"),
+            (["image2", "wrist_image"], "wrist_image"),
+            (["image3", "tertiary_image"], "tertiary_image"),
+        ]
+
+        images_found = []
+        for input_keys, internal_key in image_mapping:
+            for input_key in input_keys:
+                if input_key in payload:
+                    try:
+                        img = deserialize_image_payload(payload[input_key])
+                        img_array = np.array(img)
+                        observation[internal_key] = img_array
+                        images_found.append(f"{input_key} → {internal_key}")
+                        logging.debug(
+                            f"Mapped {input_key} → {internal_key}, shape: {img_array.shape}"
+                        )
+                        break
+                    except Exception as e:
+                        logging.warning(f"Failed to deserialize '{input_key}': {e}")
+
+        # Validate we have the primary image
+        if "full_image" not in observation:
+            logging.error("Missing primary image in payload")
+            raise ValueError("Missing primary image (expected image1 or full_image)")
+
+        # Validate we have enough images
+        actual_image_count = sum(
+            1
+            for k in observation
+            if k in ("full_image", "wrist_image", "tertiary_image")
+        )
+
+        logging.debug(
+            f"Image count: {actual_image_count}/{num_images} - {images_found}"
+        )
+
+        if actual_image_count < num_images:
+            error_msg = f"Expected {num_images} images but received {actual_image_count}. Provide image1, image2, ... up to image{num_images}"
+            logging.error(error_msg)
+            return JSONResponse(
+                {"error": error_msg},
+                status_code=400,
+            )
+
+        logging.info(
+            f"Processing inference: {actual_image_count} cameras, instruction='{instruction[:30]}...'"
+        )
 
         with torch.inference_mode():
+            logging.debug("Starting VLA inference...")
             actions = get_vla_action(
                 cfg,
                 model,
@@ -315,17 +474,38 @@ def predict_action(payload: dict):
                 proprio_projector=proprio_projector,
                 use_film=cfg.use_film,
             )
+            logging.debug(f"Inference complete, generated {len(actions)} action steps")
+            if len(actions) > 0:
+                logging.debug(f"Action shape: {actions[0].shape}")
 
         # Return the action chunk directly as a list
         response = [a.tolist() for a in actions]
+        logging.debug(f"Returning {len(response)} action steps to client")
 
         return JSONResponse(response)
     except ValueError as exc:
+        logging.warning(f"ValueError in /act: {exc}")
         return JSONResponse({"error": str(exc)}, status_code=400)
-    except Exception:
+    except Exception as exc:
+        logging.error(f"Exception in /act: {exc}")
         logging.error(traceback.format_exc())
         return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 if __name__ == "__main__":
+    # Configure logging
+    log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    parser = argparse.ArgumentParser(description="OpenVLA-OFT XVLA interface")
+    parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--device", type=str, default="cpu")
+    args = parser.parse_args()
+
+    logging.info("Starting XVLA server...")
     uvicorn.run(app, host="0.0.0.0", port=args.port)
