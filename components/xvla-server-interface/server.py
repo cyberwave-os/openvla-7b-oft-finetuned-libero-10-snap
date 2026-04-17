@@ -123,13 +123,11 @@ async def lifespan(app: FastAPI):
     training_config = tc
     # Config is already logged by load_training_config()
 
-    # Override normalization_type global if specified in training_config
-    if "normalization_type" in tc:
-        norm_type = normalization_type_from_string(tc["normalization_type"])
-        _utils_mod.ACTION_PROPRIO_NORMALIZATION_TYPE = norm_type
-        logging.info(f"Set ACTION_PROPRIO_NORMALIZATION_TYPE to {norm_type}")
-
-    # Extract dimensions from training_config
+    # Override all global constants from training_config
+    from prismatic.vla.constants import override_constants_from_training_config
+    override_constants_from_training_config(args.model_path)
+    
+    # Extract dimensions for local use (already set globally above)
     action_dim = tc.get("action_dim", 6)
     proprio_dim = tc.get("proprio_dim", 6)
     expected_proprio_dim = proprio_dim
@@ -145,6 +143,17 @@ async def lifespan(app: FastAPI):
     logging.info(f"✓ Base VLA model loaded successfully")
     logging.info(f"  Model LLM dimension: {model.llm_dim}")
     logging.info(f"  Model type: {type(model).__name__}")
+    
+    # CRITICAL: Update model's internal num_open_loop_steps to match training config
+    # The model may have a stale value saved in its checkpoint
+    if hasattr(model, 'config') and hasattr(model.config, 'num_open_loop_steps'):
+        old_value = model.config.num_open_loop_steps
+        model.config.num_open_loop_steps = tc.get("num_actions_chunk", 10)
+        logging.info(f"Updated model.config.num_open_loop_steps: {old_value} → {model.config.num_open_loop_steps}")
+    if hasattr(model, 'num_open_loop_steps'):
+        old_value = model.num_open_loop_steps
+        model.num_open_loop_steps = tc.get("num_actions_chunk", 10)
+        logging.info(f"Updated model.num_open_loop_steps: {old_value} → {model.num_open_loop_steps}")
 
     if not cfg.unnorm_key:
         cfg.unnorm_key = next(iter(model.norm_stats.keys()))
@@ -174,7 +183,8 @@ async def lifespan(app: FastAPI):
     processor = get_processor(cfg)
     logging.info("✓ Processor loaded successfully")
 
-    # Pass action_dim explicitly to bypass global constant
+    # Pass action_dim explicitly to bypass global constants
+    num_actions_chunk = tc.get("num_actions_chunk", 10)
     logging.info(
         f"Loading action head with llm_dim={model.llm_dim}, action_dim={action_dim}..."
     )
@@ -186,9 +196,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logging.warning(f"  Could not find action head checkpoint: {e}")
 
-    action_head = get_action_head(cfg, model.llm_dim, action_dim=action_dim).to(
-        args.device
-    )
+    action_head = get_action_head(cfg, model.llm_dim, action_dim=action_dim).to(args.device)
+    
+    # Configure action head's num_actions_chunk from training config
+    if hasattr(action_head, 'num_actions_chunk'):
+        old_val = action_head.num_actions_chunk
+        action_head.num_actions_chunk = num_actions_chunk
+        logging.info(f"  Updated action_head.num_actions_chunk: {old_val} → {num_actions_chunk}")
+    
     logging.info("✓ Action head loaded successfully")
 
     # Pass proprio_dim explicitly to bypass global constant
