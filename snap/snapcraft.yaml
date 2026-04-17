@@ -94,9 +94,6 @@ parts:
     override-build: |
       set -eux
       craftctl default
-      patch --forward -p1 -d "$CRAFT_PART_INSTALL" < "$CRAFT_PROJECT_DIR/patches/openvla-oft-cpu.patch" || true
-      grep -n 'DEVICE = torch.device("cpu")' "$CRAFT_PART_INSTALL/experiments/robot/openvla_utils.py"
-      grep -n 'state_dict = torch.load(checkpoint_path, weights_only=True, map_location="cpu")' "$CRAFT_PART_INSTALL/experiments/robot/openvla_utils.py"
     prime:
       - -bin/**
       - -lib/**
