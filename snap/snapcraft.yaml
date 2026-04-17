@@ -144,6 +144,8 @@ parts:
       - pillow
       - numpy
       - git+https://github.com/moojink/transformers-openvla-oft.git
+      - tensorflow_hub
+      - tensorflow_graphics
     stage-packages:
       - libgomp1
     organize:
